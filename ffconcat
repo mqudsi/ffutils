@@ -1,0 +1,26 @@
+#!/usr/local/bin/fish
+# vim: set ft=fish :
+
+set -l files $argv
+set -l out $files[-1]
+set -l files $files[1..-2]
+set -l CONCAT (mktemp)
+for f in $files
+	set -l absf (readlink -f -- $f)
+	echo "file '$absf'"
+end | tee $CONCAT
+
+set ext (string replace -r -- '.*\.' '' $out)
+set extra_cmd
+if test $ext = "m4v"
+	# work around http://trac.ffmpeg.org/ticket/7685
+	set extra_cmd $extra_cmd -f mp4
+end
+
+# two inputs, first provides all videos, second is source of metadata
+echo ffmpeg -fflags +genpts -f concat -safe 0 -i $CONCAT -i $files[1] -write_id3v2 1 -id3v2_version 3 -map_metadata:g 1:g -map_metadata:s:v 1:s:v -movflags use_metadata_tags -movflags faststart -map 0:0 -c copy $extra_cmd -export_xmp 1 -export_all 1 -vsync vfr $out
+
+ffmpeg -fflags +genpts -f concat -safe 0 -i $CONCAT -i $files[1] -write_id3v2 1 -id3v2_version 3 -map_metadata:g 1:g -map_metadata:s:v 1:s:v -map 0:a? -map 0:v? -movflags use_metadata_tags -movflags faststart -c copy $extra_cmd -export_xmp 1 -export_all 1 -vsync vfr $out
+rm $CONCAT
+
+touch -r $files[1] $out

@@ -1,0 +1,9 @@
+#!/usr/local/bin/fish
+
+set -l file $argv[1]
+echo "File: $file"
+ffprobe -select_streams a:0 -of default=noprint_wrappers=1:nokey=1 -show_entries stream=codec_name -v error "$file" | read -l audio
+ffprobe -select_streams v:0 -of default=noprint_wrappers=1:nokey=1 -show_entries stream=codec_name -v error "$file" | read -l video
+
+printf "audio: %s\n" $audio
+printf "video: %s\n" $video

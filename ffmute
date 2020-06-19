@@ -1,0 +1,30 @@
+#!/usr/local/bin/fish
+
+if not set -q argv[1]
+	echo "Usage: ffmute file.mp4 [out.mp4]"
+	exit 1
+end
+
+set -l outfile
+set -l replace 0
+if not set -q argv[2]
+	echo "Are you sure you want to replace the existing file?"
+	read response
+	if not test $response = "y" -o $response = "yes"
+		exit 1
+	end
+	set replace 1
+	set outfile /tmp/(uuid).mp4
+else
+	set outfile argv[2]
+end
+
+ffmpeg -i $argv[1] -c:v copy -an $outfile
+
+if test $status -ne 0
+	exit $status
+end
+
+if test $replace -eq 1
+	mv $outfile $argv[1]
+end
