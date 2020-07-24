@@ -230,7 +230,7 @@ end
 # ad-hoc video format from the 90s or 00s.
 set filters $filters "scale='iw:trunc(ow/a/2)*2'"
 
-if test $old_codec_video = "mpeg4" &&
+if test $old_codec_video = "mpeg4" && \
     # Assume blockiness is alleviated above 1500kbps
     test "$src_bitrate" -lt 1500
 
