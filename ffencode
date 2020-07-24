@@ -278,10 +278,10 @@ begin
            set audio_cmd "$FFMPEG -hide_banner -i \$in -ss \$start \$cmd_end $audio -map 0:a -f mp4 \$out.mp4a"
            printf "$audio_cmd && "
 
-           set merge_cmd "$FFMPEG -hide_banner -i \$in -i \$out.av1 -i \$out.mp4a -map 1:v -map 2:a -map_metadata:g 0:g -map_metadata:s:a:0 0:s:a:0 -map_metadata:s:v:0 0:s:v -movflags faststart -movflags use_metadata_tags -c copy -f mp4 \$out";
+           set merge_cmd "$FFMPEG -hide_banner -i \$in -i \$out.av1 -i \$out.mp4a -map 1:v -map 2:a -map_metadata:g 0:g -map_metadata:s:a:0 0:s:a:0 -map_metadata:s:v:0 0:s:v -movflags use_metadata_tags -movflags faststart -c copy -f mp4 \$out";
            printf "$merge_cmd; "
         else
-            set merge_cmd "$FFMPEG -hide_banner -i \$in -i \$out.av1 -map 1:v -an -map_metadata:g 0:g -map_metadata:s:v:0 0:s:v -movflags use_metadata_tags -movflags faststart -movflags faststart -movflags use_metadata_tags -c copy -f mp4 \$out";
+            set merge_cmd "$FFMPEG -hide_banner -i \$in -i \$out.av1 -map 1:v -an -map_metadata:g 0:g -map_metadata:s:v:0 0:s:v -movflags use_metadata_tags -movflags faststart -c copy -f mp4 \$out";
             printf "$merge_cmd; "
         end
     end
@@ -291,7 +291,7 @@ begin
     printf '    description = $in from $start to $end\n' $crf
 
     echo 'rule ffconcat'
-    echo '    command = ffconcat $in $out'
+    printf '    command = ffconcat $in $out; '
     echo '    pool = console'
 end | tee -a $script > /dev/null
 
@@ -401,6 +401,12 @@ if not test -f $dest || test (stat -c "%s" $dest) -eq 0
     rm -rf $outdir
     exit 1
 end
+
+# Work around an ffmpeg bug where metadata is not copied to the correct section
+# See https://trac.ffmpeg.org/ticket/4209
+mp4extract moov/meta $source moov-meta 2>| string replace "ERROR: " "";
+test -f moov-meta && mp4edit --insert moov:moov-meta $dest /dev/stdout | rewrite $dest
+rm -f moov-meta
 
 function sum
     set sum 0

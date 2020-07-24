@@ -153,13 +153,20 @@ printf "Splitting input into %d files then merging.\n" (count $chunks)
 set -l ninja_status '[%f/%t] (%es): '
 env NINJA_STATUS=$ninja_status ninja -v -C $outdir
 
-and touch -r $source $temp_dest
-and safe_mv $temp_dest $dest
+and begin
+    # Work around an ffmpeg bug where metadata is not copied to the correct section
+    # See https://trac.ffmpeg.org/ticket/4209
+    mp4extract moov/meta $source moov-meta 2>| string replace "ERROR: " "";
+    test -f moov-meta && mp4edit --insert moov:moov-meta $temp_dest /dev/stdout | rewrite $temp_dest
+    rm -f moov-meta
 
-and rm -rf $outdir
+    touch -r $source $temp_dest
+    safe_mv $temp_dest $dest
 
-and if type -q size_compare
-    size_compare $source $dest
+    rm -rf $outdir
+    if type -q size_compare
+        size_compare $source $dest
+    end
 end
 
 echo "done!"

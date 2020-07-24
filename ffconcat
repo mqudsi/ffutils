@@ -17,10 +17,21 @@ if test $ext = "m4v"
 	set extra_cmd $extra_cmd -f mp4
 end
 
+set ffmpeg_ok 0
 # two inputs, first provides all videos, second is source of metadata
-echo ffmpeg -fflags +genpts -f concat -safe 0 -i $CONCAT -i $files[1] -write_id3v2 1 -id3v2_version 3 -map_metadata:g 1:g -map_metadata:s:v 1:s:v -movflags use_metadata_tags -movflags faststart -map 0:0 -c copy $extra_cmd -export_xmp 1 -export_all 1 -vsync vfr $out
-
-ffmpeg -fflags +genpts -f concat -safe 0 -i $CONCAT -i $files[1] -write_id3v2 1 -id3v2_version 3 -map_metadata:g 1:g -map_metadata:s:v 1:s:v -map 0:a? -map 0:v? -movflags use_metadata_tags -movflags faststart -c copy $extra_cmd -export_xmp 1 -export_all 1 -vsync vfr $out
+set cmd ffmpeg -fflags +genpts -f concat -safe 0 -i $CONCAT -i $files[1] -write_id3v2 1 -id3v2_version 3 -map_metadata:g 1:g -map_metadata:s:v 1:s:v -map 0:a? -map 0:v? -movflags use_metadata_tags -movflags faststart -c copy $extra_cmd -export_xmp 1 -export_all 1 -vsync vfr $out
+echo $cmd
+command $cmd
+and set ffmpeg_ok 1
 rm $CONCAT
 
-touch -r $files[1] $out
+
+if test $ffmpeg_ok -eq 1
+	# Work around an ffmpeg bug where metadata is not copied to the correct section
+	# See https://trac.ffmpeg.org/ticket/4209
+	mp4extract moov/meta $files[1] moov-meta 2>| string replace "ERROR: " "";
+	test -f moov-meta && mp4edit --insert moov:moov-meta $out /dev/stdout | rewrite $out
+	rm -f moov-meta
+
+	touch -r $files[1] $out
+end
