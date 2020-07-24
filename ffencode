@@ -7,6 +7,8 @@ set FFMPEG ffmpeg
 # set FFMPEG /mnt/d/rand/FFmpeg/ffmpeg_g
 # set FFMPEG /mnt/c/Users/mqudsi/Downloads/ffmpeg-git-20191228-amd64-static/ffmpeg
 
+export AV_LOG_FORCE_COLOR=1
+
 if not test $FFMPEG = "ffmpeg" -o -x $FFMPEG
     echo "Cannot find ffmpeg at $FFMPEG"
     exit 1
@@ -258,8 +260,7 @@ begin
     echo '    command = mv $in $out'
 
     echo 'rule ffencode'
-
-    printf "    command = sleep \$delay; export AV_LOG_FORCE_COLOR=1; "
+    printf "    command = sleep \$delay; "
 
     # See https://trac.ffmpeg.org/ticket/6375 for `-max_muxing_queue_size 99999` reason
     if test $codec != "av1"
