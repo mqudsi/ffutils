@@ -12,6 +12,12 @@ if test $argv[1] = "--crop"
     set crop (echo $crop,)
 end
 
+set -l half 0
+if test $argv[1] = "--half" -o $argv[1] = "--halve"
+    set half 1
+    set -e argv[1]
+end
+
 set -l audio_style "-c:a copy"
 if string match -r -- "--(re)?encode.?audio" $argv[1]
     set audio_style "-c:a libfdk_aac -ac 1 -b:a 48k"
@@ -29,8 +35,17 @@ set -l build
 set -l source (realpath $argv[1])
 set -l chunks $argv[2..-2] # skip first and last parameters
 set -l dest (realpath $argv[-1])
+# We need to cache this value in case we overwrite the input
+set -l orig_size (stat $source --format '%s')
 
-# create a directory to hold build scripts and intermediate files
+if test $half -eq 1
+    # Duration: 00:02:32.02
+    string match -rq -- "Duration: (?<hours>\d\d):(?<minutes>\d\d):(?<seconds>\d\d\.\d\d)" (ffprobe -i $source 2>&1)
+    set seconds (math $hours \* 3600 + $minutes \* 60 + $seconds)
+    set chunks "0,"(math $seconds/2)
+end
+
+# Create a directory to hold build scripts and intermediate files
 set outdir (mktemp -d)
 # set outdir /tmp/tmp.aJ6ntpV6qY/
 set script $outdir/build.ninja
@@ -165,7 +180,7 @@ and begin
 
     rm -rf $outdir
     if type -q size_compare
-        size_compare $source $dest
+        size_compare $source $dest $orig_size
     end
 end
 

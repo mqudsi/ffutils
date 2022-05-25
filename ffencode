@@ -3,19 +3,20 @@
 
 # example: ffencode in.mp4 out.mp4
 
-set FFMPEG ffmpeg
-# set FFMPEG /mnt/d/rand/FFmpeg/ffmpeg_g
-# set FFMPEG /mnt/c/Users/mqudsi/Downloads/ffmpeg-git-20191228-amd64-static/ffmpeg
+set FFMPEG ffmpeg -hide_banner -sws_flags +print_info+accurate_rnd+full_chroma_int
+set FFMPEG_WIN /mnt/c/Users/mqudsi/Downloads/ffmpeg-20200818-1c7e55d-win64-static/bin/ffmpeg.exe
+set MOVFLAGS -movflags +write_colr+use_metadata_tags+frag_keyframe+empty_moov+default_base_moof+faststart -frag_duration 1000000
 
 export AV_LOG_FORCE_COLOR=1
 
-if not test $FFMPEG = "ffmpeg" -o -x $FFMPEG
-    echo "Cannot find ffmpeg at $FFMPEG"
+if not test $FFMPEG[1] = "ffmpeg" -o -x $FFMPEG[1]
+    echo "Cannot find ffmpeg at "$FFMPEG[1]
     exit 1
 end
 
 function has_audio
-    ffprobe -select_streams a:0 -of default=noprint_wrappers=1:nokey=1 -show_entries stream=codec_name -v quiet $argv[1] | string match -qr "."
+    echo "Checking for audio" 1>&2
+    command ffprobe -hide_banner -select_streams a:0 -of default=noprint_wrappers=1:nokey=1 -show_entries stream=codec_name -v quiet $argv[1] | string match -qr "."
 end
 
 function ts_to_secs
@@ -87,15 +88,21 @@ set filters
 set corecount (grep -P '^core id\t' /proc/cpuinfo | wc -l)
 # set threads (math "$corecount * 0.50")
 set threads (math -s0 "$corecount")
-set threads 16
+set threads (math -s0 "$corecount - 2")
+set threads (math -s0 "$corecount * 0.75")
+set threads (math -s0 "$corecount * 0.5")
+set threads (math -s0 "$corecount")
+# set threads 10
 
 # Some default values pertaining to video encoding
-set crf 18
+set crf 20
 set codec libx265
 set codec_extra
 set range
+set custom_range 0
 set audio "-c:a copy"
-set preset "medium"
+set preset "slow"
+set gpu 0
 
 set source (realpath $argv[-2])
 set dest (realpath $argv[-1])
@@ -105,19 +112,39 @@ if not test -e $source
     exit 1
 end
 
+set -l replace 0
+set -l actual_dest $dest
+if test -f $dest
+    echo "Are you sure you want to replace the existing file?"
+    read response
+    if not test $response = "y" -o $response = "yes"
+        exit 1
+    end
+    set replace 1
+    set dest /tmp/(uuid).mp4
+end
 
 set i 0
+set default_crf 1
+set default_preset 1
 while test (set i (math $i + 1); echo $i) -le (count $argv)
     set arg $argv[$i]
-    echo arg: $arg
+    # echo arg: $arg
 
     if test $arg = "--aom" || test $arg = "--av1"
         set codec "av1"
         set codec_extra $codec_extra -strict -2
     end
 
-    if test $arg = "--x264"
+    if test $arg = "--x264" || test $arg = "--h264"
         set codec "libx264"
+        if test $default_crf -eq 1
+            # libx264 requires a lower crf setting to give a comparable result to libx265
+            set crf (math $crf - 3)
+        end
+        if test $default_preset -eq 1
+            set preset veryslow
+        end
     end
 
     if test $arg = "--range"
@@ -130,16 +157,22 @@ while test (set i (math $i + 1); echo $i) -le (count $argv)
         if not string match -qr "." -- $range[1]
             set range[1] 0
         end
+        set custom_range 1
     end
 
     if test $arg = "--crf"
         set i (math $i + 1); set arg $argv[$i]
         set crf $arg
+        set default_crf 0
     end
 
     if test $arg = "--decomb"
         # set filters $filters yadif
         set filters $filters bwdif
+    end
+
+    if test $arg = "--gpu"
+        set gpu 1
     end
 
     if test $arg = "--stabilize"
@@ -150,7 +183,11 @@ while test (set i (math $i + 1); echo $i) -le (count $argv)
     end
 
     if test $arg = "--audio"
-        set audio "-c:a libfdk_aac -ac 1 -b:a 48k"
+        set audio "-c:a libfdk_aac -ac 1 -b:a 64k"
+    end
+
+    if test $arg = "--mute"
+        set audio "-an"
     end
 
     if test $arg = "--filter"
@@ -158,11 +195,18 @@ while test (set i (math $i + 1); echo $i) -le (count $argv)
         set filters $filters $arg
     end
 
-    if test $arg = "--veryslow"
-        set preset "veryslow"
+    if test $arg = "--preset"
+        set i (math $i + 1); set arg $argv[$i]
+        set preset $arg
+        set default_preset 0
     end
 
-    if test $arg = "--crop"
+    if test $arg = "--resize"
+        set i (math $i + 1); set arg $argv[$i]
+        set filters $filters scale=$arg
+    end
+
+    if test $arg = "--crop" || test $arg = "--autocrop"
         echo "Detecting crop..."
         # See https://trac.ffmpeg.org/ticket/6375 for `-max_muxing_queue_size 99999` reason
         set crop (command $FFMPEG -i $source -max_muxing_queue_size 99999 -vf cropdetect -f null - 2>|
@@ -172,7 +216,7 @@ while test (set i (math $i + 1); echo $i) -le (count $argv)
         sleep 1
     end
 
-    if test $arg = "--single"
+    if string match -qr -- "--single" $arg
         set threads 1
     end
 end
@@ -184,7 +228,8 @@ set old_codec_video (string replace -rf -- "video: " "" $old_codec)
 set old_codec_audio (string replace -rf -- "audio: " "" $old_codec)
 
 # re-encode unsupported audio formats in mp4 containers
-if string match -q $old_codec_audio pcm_s16le
+# if string match -q $old_codec_audio pcm_s16le
+if has_audio $source && not string match -q -- "$audio" "-an" && not string match -iqr $old_codec_audio aac
     set audio "-c:a libfdk_aac -ac 1 -b:a 48k"
 end
 
@@ -193,26 +238,28 @@ set script $outdir/build.ninja
 rm -f $script
 
 
-set src_bitrate (ffprobe -v quiet -select_streams v:0 -show_entries stream=bit_rate -of default=noprint_wrappers=1:nokey=1 $source)
+set src_bitrate (ffprobe -hide_banner -v quiet -select_streams v:0 -show_entries stream=bit_rate -of default=noprint_wrappers=1:nokey=1 $source)
 if string match -q "N/A" $src_bitrate
     # mkv and some other container formats do not store the per-stream duration or the bitrate
-    set src_bitrate (ffprobe -v quiet -show_entries format=bit_rate -of default=noprint_wrappers=1:nokey=1 $source)
+    set src_bitrate (ffprobe -hide_banner -v quiet -show_entries format=bit_rate -of default=noprint_wrappers=1:nokey=1 $source)
 end
 
 echo "Source bitrate: $src_bitrate"
-if test $codec = "libx265"
-    # yuvj420p preserves full-range color values (0-255) rather than yuv420's limited range (16-235),
-    # but the output is strictly 8-bit. There is no yuvj420p10le/yuvj420p12le for 10/12-bit output.
-    # set codec_extra $codec_extra -pix_fmt yuvj420p
-    set codec_extra $codec_extra -pix_fmt yuv420p12le
-
+if test $codec = "libx265" && not test $gpu -eq 1
     # Set pass-through x265 options
     set x265_params vbv-bufsize=1000
 
+    # Setting the bitrate is super complicated and there is absolutely no "one size fits all"
+    # That said, we are assuming we're coming from something worse than HEVC/AV1, so this
+    # might help. Comment it out if the files are coming out too large.
+    # See https://slhck.info/video/2017/03/01/rate-control.html for info on maxrate.
+    set -g max_bitrate 0
     if set max_bitrate (math -s0 "0.8 * $src_bitrate / 1000")
+        set max_bufsize (math "$max_bitrate * 30") # 30 second buffer
         # Give x265 a guesstimate on resulting size
         # vbv-maxrate is in kilobits
-        set x265_params $x265_params:vbv-maxrate=$max_bitrate
+        set x265_params vbv-maxrate=$max_bitrate:vbv-bufsize=$max_bufsize
+        echo Using a max bitrate of $max_bitrate"k" and a max buffer size of $max_bufsize"k"
     end
 
     # -- Experimental feature to enable adaptive quantization à la x264 --
@@ -232,30 +279,76 @@ end
 # ad-hoc video format from the 90s or 00s.
 set filters $filters "scale='iw:trunc(ow/a/2)*2'"
 
-if test $old_codec_video = "mpeg4" && \
-    # Assume blockiness is alleviated above 1500kbps
-    test "$src_bitrate" -lt 1500
+# Remove duplicate frames before anything else. Note that this requires `-vsync vfr`
+# set filters mpdecimate=hi=(math 64\*12):lo=(math 64\*3):max=0 $filters
+# set vsync "-vsync vfr"
 
-    # Ideally, we'd use nlmeans here, but ffmpeg's implementation is slower than encoding AV1!
-    set filters $filters hqdn3d=3:2:2:1
-else
-    # Apply a deblocking filter anyway, but at such light levels that it can't hurt
-    set filters $filters hqdn3d=1:1:0:0
-end
+# if test $old_codec_video = "mpeg4" && \
+#     # Assume blockiness is alleviated above 1500kbps
+#     test "$src_bitrate" -lt 1500
+#
+#     # Ideally, we'd use nlmeans here, but ffmpeg's implementation is slower than encoding AV1!
+#     set filters $filters hqdn3d=3:2:2:1
+# else
+#     # Apply a deblocking filter anyway, but at such light levels that it can't hurt
+#     set filters $filters hqdn3d=1:1:0:0
+# end
 
 # ffmpeg has conditional specifiers only for global streams, not for specific types.
 # If we want to avoid an error on files without audio streams, we need to pre-detect their absence
-if not has_audio $source
+if string match -q -- "$audio" "-an" or not has_audio $source
     set audio "-an"
 else
-    # here we can conditionally add any audio-related arguments we always want (when audio is present)
+    # Here we can conditionally add any audio-related arguments we always want (when audio is present)
     set audio $audio -map_metadata:s:a 0:s:a
 end
 
-# Merge all filters into a single comma-delimited argument
-set filter (printf "%s," $filters | string trim -c ,)
+if test $gpu -eq 1
+    set threads 1
+    set FFMPEG[1] $FFMPEG_WIN
+    set audio (string replace -r -- libfdk_ "" $audio)
+    if test "$codec" = "libx264"
+        set codec h264_nvenc
+    else if test "$codec" = "libx265"
+        set codec hevc_nvenc
+    else
+        echo "Unsupported codec for hardware acceleration!"
+        exit -1
+    end
+    set pix_fmt yuv420p10le
+    # set codec_extra -pixel_format yuv444p16le  -preset:v p6 -tune hq -profile:v main10 -level 6.2 -tier high -rc vbr -rc-lookahead 200  -2pass true -spatial_aq true -temporal_aq true -cq 28 -qp 28 -b:v 0 -weighted_pred 1 -multipass fullres
+    # This is basically lossless, but way too big (-rc vbr w/ default -cq 0)
+    # set codec_extra $codec_extra -pixel_format $pix_fmt -preset:v p7 -tune hq -profile:v main10 -level 6.2 -tier high -rc vbr -rc-lookahead 200 -spatial_aq true -temporal_aq true -b:v 0 -weighted_pred 1 -multipass fullres -refs 3 -b_ref_mode 1
+    set codec_extra $codec_extra -pixel_format $pix_fmt -preset:v p7 -tune hq -profile:v main10 -level 6.2 -tier high -rc vbr -rc-lookahead 200 -spatial_aq true -temporal_aq true -b:v 0 -weighted_pred 1 -multipass fullres -refs 3 -b_ref_mode 1 -init_qpP 28 -init_qpB 28 -init_qpI 28 -cq 28
+    set -a filters format=$pix_fmt
+else if test $codec != "av1"
+    set -a codec_extra -crf $crf
+end
+
+# Have ffmpeg detect the input color range (only needs to be overridden if something is masquerading
+# as full-range but it actually contains compressed-range colors), but force the output to be full-range
+# and tell ffmpeg to write that out to the mp4 container. Make sure MOVFLAGS w/ +write_colr is used.
+set full_range 1
+if test $full_range -eq 1
+    set -a filters zscale=in_range=input:out_range=full
+else
+    set -a filters zscale=in_range=input:out_range=limited
+end
+
+# Support encoding 8-bit inputs as 10-bit outputs
+set ten_bit 1
+if test $gpu -ne 1
+    if test $ten_bit -eq 1
+        set -a codec_extra -pix_fmt yuv420p10le
+    else
+        set -a codec_extra -pix_fmt yuv420p
+    end
+end
 
 begin
+    # Merge all filters into a single comma-delimited argument
+    set filter (printf "%s," $filters | string trim -c ,)
+
     echo 'rule move'
     echo '    command = mv $in $out'
 
@@ -264,42 +357,81 @@ begin
 
     # See https://trac.ffmpeg.org/ticket/6375 for `-max_muxing_queue_size 99999` reason
     if test $codec != "av1"
-        printf "$FFMPEG -hide_banner -i \$in -write_id3v2 1 -id3v2_version 3 -max_muxing_queue_size 1024 -map_metadata:g 0:g -map_metadata:s:v 0:s:v -movflags use_metadata_tags -movflags faststart -ss \$start \$cmd_end -filter:v $filter -c:v $codec $codec_extra  -crf $crf $audio -export_xmp 1 -export_all 1 \$out ; "
+        set in \$in
+        # Convert paths to WSL format if using ffmpeg for Windows
+        if string match -irq '\.exe' -- $FFMPEG[1]
+            set in "\"\$\$(echo \$in | sed -r 's@/mnt/(.)/(.*)@\\\\1:/\\\\2@')\""
+        end
+        printf "$FFMPEG -i $in \$cmd_start \$cmd_end -write_id3v2 1 -id3v2_version 3 -max_muxing_queue_size 1024 -map_metadata:g 0:g -map_metadata:s:v 0:s:v $MOVFLAGS -filter:v $filter $vsync -c:v $codec $codec_extra $audio -export_xmp 1 -export_all 1 \$\$(realpath --relative-to=./ -avoid_negative_ts 1 \$out) && "
+    else # for AV1
 
-    else
         # gdb -ex=r -ex=q --args
-        set cmd_read_transform "$FFMPEG -hide_banner -i \$in -strict -1 -map 0:v -ss \$start \$cmd_end -filter:v $filter -pix_fmt yuvj420p -f yuv4mpegpipe pipe:1 "
-        set av1_opts "--quantizer 100 --speed 5" # this is the default
-        set cmd_encode "rav1e - $av1_opts --output -"
-        set cmd_save "$FFMPEG -hide_banner -i pipe:0 -c copy -f mp4 \$out.av1"
+        set cmd_read_transform "$FFMPEG -i \$in \$cmd_start \$cmd_end $codec_extra -map 0:v -filter:v $filter $vsync -f yuv4mpegpipe pipe:1 "
+
+        # set encoder svt-av1
+        set encoder rav1e
+
+        set cmd_encode
+        if string match -q $encoder "rav1e"
+            set av1_opts "--quantizer 40 --speed 5"
+            # rav1e supports full-range output but does not do any range-scaling, so the --range
+            # option must correspond to whatever we have ffmpeg producing.
+            # See https://github.com/xiph/rav1e/issues/1489
+            if test $full_range -eq 1
+                set -a av1_opts --range Full
+            else
+                set -a av1_opts --range Limited
+            end
+            set cmd_encode "rav1e - $av1_opts --output -"
+        else if string match -q $encoder "svt-av1"
+            # set cmd_encode SvtAv1EncApp -i stdin --preset 10 --keyint 240 --input-depth 10 --crf 30 --film-grain 10 --tune 0 -b stdout --lp 2 --pin 0
+            set cmd_encode SvtAv1EncApp -i stdin --preset 10 --keyint 240 --crf 20 --film-grain 20 --tune 0 -b stdout --lp 2 --pin 0
+            if test $full_range -eq 1
+                set -a cmd_encode --color-range 1 # 0 is limited, 1 is full
+            end
+            if test $ten_bit -eq 1
+                set -a cmd_encode --input-depth 10
+            end
+        else
+            echo "Unknown AV1 encoder: \"$encoder\"!" 1>&2
+            exit 1
+        end
+
+        set save_opts "-color_range 1"
+        if test $full_range -eq 1
+            set save_opts "-color_range 2"
+        end
+        set cmd_save "$FFMPEG -i pipe:0 -c copy $save_opts -f mp4 -movflags +write_colr \$out.av1"
         printf "env AV_LOG_FORCE_COLOR=1 $cmd_read_transform | $cmd_encode | $cmd_save && "
 
-        if not string match -q -- "$audio" "-an"
-           set audio_cmd "$FFMPEG -hide_banner -i \$in -ss \$start \$cmd_end $audio -map 0:a -f mp4 \$out.mp4a"
+        if has_audio $source && not string match -eq -- "$audio" "-an"
+           set audio_cmd "$FFMPEG -i \$in \$cmd_start \$cmd_end $audio -map 0:a -f mp4 \$out.mp4a"
            printf "$audio_cmd && "
 
-           set merge_cmd "$FFMPEG -hide_banner -i \$in -i \$out.av1 -i \$out.mp4a -map 1:v -map 2:a -map_metadata:g 0:g -map_metadata:s:a:0 0:s:a:0 -map_metadata:s:v:0 0:s:v -movflags use_metadata_tags -movflags faststart -c copy -f mp4 \$out";
-           printf "$merge_cmd; "
+           set merge_cmd "$FFMPEG -i \$in -i \$out.av1 -i \$out.mp4a -map 1:v -map 2:a -map_metadata:g 0:g -map_metadata:s:a:0 0:s:a:0 -map_metadata:s:v:0 0:s:v -c copy $save_opts -f mp4 -movflags +write_colr \$out";
+           printf "$merge_cmd && "
         else
-            set merge_cmd "$FFMPEG -hide_banner -i \$in -i \$out.av1 -map 1:v -an -map_metadata:g 0:g -map_metadata:s:v:0 0:s:v -movflags use_metadata_tags -movflags faststart -c copy -f mp4 \$out";
-            printf "$merge_cmd; "
+            set merge_cmd "$FFMPEG -i \$in -i \$out.av1 -map 1:v -an -map_metadata:g 0:g -map_metadata:s:v:0 0:s:v -c copy $save_opts -f mp4 -movflags +write_colr \$out";
+            printf "$merge_cmd && "
         end
     end
 
     printf "echo 'segment'_complete; \n"
 
-    printf '    description = $in from $start to $end\n' $crf
+    printf '    description = $in from $start to $end\n'
 
     echo 'rule ffconcat'
-    printf '    command = ffconcat $in $out; '
+    # --keep-ts skips remuxing to avi to reset timestamps
+    printf '    command = ffconcat --keep-ts $in $out; '
+    printf '\n'
     echo '    pool = console'
 end | tee -a $script > /dev/null
 
 set length (ffprobe -v error -show_entries format=duration \
-  -of default=noprint_wrappers=1:nokey=1 $source) # in seconds
+  -of default=noprint_wrappers=1:nokey=1 $source) # in decimal seconds
 echo "Length: $length"
-if string match -qr "." range[1] && not string match -qr "." range[2]
-    set range[2] (ts_to_secs $length)
+if string match -qr "." $range[1] && string match -qr '^$' "$range[2]"
+    set range[2] (secs_to_ts $length)
 end
 
 if string match -qr "." $range[1] && string match -qr "." $range[2]
@@ -313,22 +445,39 @@ end
 set start_delay 0
 set delay_increment 100 # ms
 
+set time_base (ffprobe -hide_banner -select_streams v:0 -of default=noprint_wrappers=1:nokey=1 -show_entries \
+   stream=time_base -v quiet $source)
+
 set -l files ""
 for index in (seq 1 $threads)
-    set -l start (math -s4 "($length / $threads) * ($index - 1)")
-    set -l end (math -s4 "($length / $threads) * $index")
+    set -l start (math "($length / $threads) * ($index - 1)")
+    set -l end (math "($length / $threads) * $index")
+    set -l len (math $length / $threads)
 
+    # Avoid repeating a frame
+    # if ! test $index -eq 1
+    #     set start (math $start + $time_base)
+    # end
+
+    # Adjust start/end for manually specified range (if any)
     set -l start (math (ts_to_secs $range[1]) + $start)
     set -l end (math (ts_to_secs $range[1]) + $end)
 
-    # echo "start: $start"
-    # echo "end: $end"
+    # It seems that `ffmpeg -ss $start -t $len -i foo` and `ffmpeg -i foo -ss $start -to $end` where `$end = $start + $len`
+    # are not identical and the former results in duplication of the content from the last keyframe before `$start + $len`
+    # until `$start + $len`, while the latter doesn't.
 
+    set -l cmd_len ""
+    if test $index -ne $threads || string match -qr "." $range[2]
+        set cmd_len "-t $len"
+    end
+    set -l cmd_start ""
+    if test $start -ne 0
+        set cmd_start "-ss $start"
+    end
     set -l cmd_end ""
-    if test $index -ne $threads
+    if test $index -ne $threads || test $custom_range -eq 1
         set cmd_end "-to $end"
-    else if string match -qr "." $range[2]
-        set cmd_end "-to $range[2]"
     end
 
     set -l outfile $outdir/$index.mp4
@@ -336,13 +485,14 @@ for index in (seq 1 $threads)
     begin
         echo "build $outfile: ffencode" (string replace -a ' ' '$ ' -- $source)
         echo "   start = $start"
+        echo "   cmd_start = $cmd_start"
+        echo "   cmd_len = $cmd_len"
         echo "   cmd_end = $cmd_end"
         echo "   end =" (if string match -qr . -- $end; echo $end; else; echo "end"; end)
         echo "   delay =" (math -s3 $start_delay/1000);
         # set start_delay (math $start_delay + $delay_increment)
 
-        # Prefer index 2 and not 1 so it doesn't finish too early if the first/last chunk is too short
-        if test $index -eq 2; or test $threads -eq 1
+        if test $index -eq 1; or test $threads -eq 1
             # So we have something to look at during long-running jobs
             echo "    pool = console"
         end
@@ -353,7 +503,6 @@ end
 
 begin
     printf 'build %s: ffconcat %s\n' (string replace -a ' ' '$ ' -- $dest) $files
-    # printf 'build %s: move %s\n' (string replace -a ' ' '$ ' -- $real_dest) (string replace -a ' ' '$ ' -- $dest)
 end | tee -a $script > /dev/null
 
 printf "Splitting input into %d parts to reencode then merging.\n" $threads
@@ -377,7 +526,7 @@ set qp
 # Thanks to ninja's output pooling, we can guarantee we get all the output from
 # one segment before we see any output from the next.
 # nvim $outdir/build.ninja
-env CLICOLOR_FORCE=1 ninja -C $outdir -v 2>&1 | tee /dev/tty | while read line
+env CLICOLOR_FORCE=1 NINJA_STATUS=$ninja_status ninja -C $outdir -v 2>&1 | tee /dev/tty | while read line
 
     if set segment_qp (string match -r "Avg QP: *([0-9.]+)" -- $line)
         set qp[$idx] $segment_qp[2]
@@ -395,16 +544,16 @@ env CLICOLOR_FORCE=1 ninja -C $outdir -v 2>&1 | tee /dev/tty | while read line
 
 end
 
-if not test -f $dest || test (stat -c "%s" $dest) -eq 0
+if test $status -ne 0 || not test -f $dest || test (stat -c "%s" $dest) -eq 0
     # failure
     rm -f $dest
     rm -rf $outdir
     exit 1
 end
 
-# Work around an ffmpeg bug where metadata is not copied to the correct section
-# See https://trac.ffmpeg.org/ticket/4209
-mp4extract moov/meta $source moov-meta 2>| string replace "ERROR: " "";
+# # Work around an ffmpeg bug where metadata is not copied to the correct section. exiftool doesn't do this.
+# # See https://trac.ffmpeg.org/ticket/4209
+mp4extract moov/meta $source moov-meta 2>| string replace -r "ERROR: " "";
 test -f moov-meta && mp4edit --insert moov:moov-meta $dest /dev/stdout | rewrite $dest
 rm -f moov-meta
 
@@ -429,11 +578,16 @@ set bitrate (ffprobe -select_streams v:0 -of default=noprint_wrappers=1:nokey=1 
 set time (math $last_end_time - $start_time)
 echo "*** " encoded $frames frames in {$time}s "("(math $frames / $time)" fps)", $bitrate kb/s, Avg QP: (math -s 2 (avg $qp)) " ***"
 
-rm -rf $outdir
 
 if type -q size_compare
     size_compare $source $dest
 end
+
+if test $replace -eq 1
+    mv $dest $actual_dest
+end
+
+# rm -rf $outdir
 
 echo "done!"
 
