@@ -176,7 +176,7 @@ while test (set i (math $i + 1); echo $i) -le (count $argv)
     end
 
     if test $arg = "--stabilize"
-        command $FFMPEG -i $source -vf vidstabdetect=stepsize=4:shakiness=9:accuracy=15:result=$outdir/transform_vectors.trf -f null -
+        command $FFMPEG -i $source -vf vidstabdetect=stepsize=6:shakiness=9:accuracy=15:show=1:result=$outdir/transform_vectors.trf -f null -
         set filters $filters vidstabtransform=input=$outdir/transform_vectors.trf:zoom=1:smoothing=30,unsharp=5:5:0.8:3:3:0.4
 
         set arg --crop
