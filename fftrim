@@ -112,7 +112,7 @@ begin
         # * Using -ss before -i (sometimes) aligns to keyframes, but we need to use -t <length> instead of -to <timestamp>
         # * Use `-noaccurate_seek` to skip backwards to the preceding keyframe to avoid periods of no video (default when not transcoding)
         # * Use `-avoid_negative_ts 1` to prevent issues with out-of-order PTS values for subsequent frames
-        printf '    command = env AV_LOG_FORCE_COLOR=1 ffmpeg -fflags +genpts -hide_banner -ss $start -i $in -write_id3v2 1 -id3v2_version 3 -map_metadata 0 -map_metadata:s:v 0:s:v -movflags use_metadata_tags -movflags faststart $cmd_end -c:v copy -avoid_negative_ts 1 %s -export_xmp 1 -export_all 1 $out\n' $audio_style
+        printf '    command = env AV_LOG_FORCE_COLOR=1 ffmpeg -fflags +genpts -hide_banner -ss $start -i $in -write_id3v2 1 -id3v2_version 3 -map_metadata 0 -map_metadata:s:v 0:s:v -movflags use_metadata_tags -movflags faststart $cmd_end -c:v copy -avoid_negative_ts 1 %s -export_xmp 1 -export_all 1 $out\n' $audio_style "$extra_cmd"
     else
         # use yuvj420p if not doing 12-bit encodes
         # printf '    command = env AV_LOG_FORCE_COLOR=1 ffmpeg -fflags +genpts -hide_banner -i $in -write_id3v2 1 -id3v2_version 3 -map_metadata 0 -map_metadata:s:v 0:s:v -movflags use_metadata_tags -movflags faststart -ss $start $cmd_end -c:v libx265 -pix_fmt yuv420p12le -filter:v %shqdn3d=2:2:1:1 -crf:v %d -bufsize 1M %s %s -export_xmp 1 -export_all 1 $out\n' $crop $crf $audio_style "$extra_cmd"
