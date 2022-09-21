@@ -330,9 +330,13 @@ end
 # and tell ffmpeg to write that out to the mp4 container. Make sure MOVFLAGS w/ +write_colr is used.
 set full_range 1
 if test $full_range -eq 1
-    set -a filters zscale=in_range=input:out_range=full
+    # zscale is preferable but crashes on avx2 in some cases
+    # set -a filters zscale=in_range=input:out_range=full
+    set -a filters scale=in_range=auto:out_range=full
 else
-    set -a filters zscale=in_range=input:out_range=limited
+    # zscale is preferable but crashes on avx2 in some cases
+    # set -a filters zscale=in_range=input:out_range=limited
+    set -a filters scale=in_range=auto:out_range=limited
 end
 
 # Support encoding 8-bit inputs as 10-bit outputs
