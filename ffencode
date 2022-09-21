@@ -319,7 +319,7 @@ if test $gpu -eq 1
     # set codec_extra -pixel_format yuv444p16le  -preset:v p6 -tune hq -profile:v main10 -level 6.2 -tier high -rc vbr -rc-lookahead 200  -2pass true -spatial_aq true -temporal_aq true -cq 28 -qp 28 -b:v 0 -weighted_pred 1 -multipass fullres
     # This is basically lossless, but way too big (-rc vbr w/ default -cq 0)
     # set codec_extra $codec_extra -pixel_format $pix_fmt -preset:v p7 -tune hq -profile:v main10 -level 6.2 -tier high -rc vbr -rc-lookahead 200 -spatial_aq true -temporal_aq true -b:v 0 -weighted_pred 1 -multipass fullres -refs 3 -b_ref_mode 1
-    set codec_extra $codec_extra -pixel_format $pix_fmt -preset:v p7 -tune hq -profile:v main10 -level 6.2 -tier high -rc vbr -rc-lookahead 200 -spatial_aq true -temporal_aq true -b:v 0 -weighted_pred 1 -multipass fullres -refs 3 -b_ref_mode 1 -init_qpP 28 -init_qpB 28 -init_qpI 28 -cq 28
+    set codec_extra $codec_extra -pixel_format $pix_fmt -preset:v p7 -tune hq -profile:v main10 -level 6.2 -tier high -rc vbr -rc-lookahead 200 -spatial_aq true -temporal_aq true -b:v 0 -weighted_pred 1 -multipass fullres -refs 3 -b_ref_mode 1 -init_qpP 23 -init_qpB 23 -init_qpI 23 -cq 23
     set -a filters format=$pix_fmt
 else if test $codec != "av1"
     set -a codec_extra -crf $crf
