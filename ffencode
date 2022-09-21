@@ -366,7 +366,7 @@ begin
         if string match -irq '\.exe' -- $FFMPEG[1]
             set in "\"\$\$(echo \$in | sed -r 's@/mnt/(.)/(.*)@\\\\1:/\\\\2@')\""
         end
-        printf "$FFMPEG -i $in \$cmd_start \$cmd_end -write_id3v2 1 -id3v2_version 3 -max_muxing_queue_size 1024 -map_metadata:g 0:g -map_metadata:s:v 0:s:v $MOVFLAGS -filter:v $filter $vsync -c:v $codec $codec_extra $audio -export_xmp 1 -export_all 1 \$\$(realpath --relative-to=./ -avoid_negative_ts 1 \$out) && "
+        printf "$FFMPEG -i $in \$cmd_start \$cmd_end -write_id3v2 1 -id3v2_version 3 -max_muxing_queue_size 1024 -map_metadata:g 0:g -map_metadata:s:v 0:s:v $MOVFLAGS -filter:v $filter $vsync -c:v $codec $codec_extra $audio -export_xmp 1 -export_all 1 \$\$(realpath --relative-to=./ \$out) && "
     else # for AV1
 
         # gdb -ex=r -ex=q --args
