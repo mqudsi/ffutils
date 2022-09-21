@@ -388,8 +388,8 @@ begin
             end
             set cmd_encode "rav1e - $av1_opts --output -"
         else if string match -q $encoder "svt-av1"
-            # set cmd_encode SvtAv1EncApp -i stdin --preset 10 --keyint 240 --input-depth 10 --crf 30 --film-grain 10 --tune 0 -b stdout --lp 2 --pin 0
-            set cmd_encode SvtAv1EncApp -i stdin --preset 10 --keyint 240 --crf 20 --film-grain 20 --tune 0 -b stdout --lp 2 --pin 0
+            # set cmd_encode SvtAv1EncApp -i stdin --preset 10 --keyint 240 --rc 0 --passes 1 --input-depth 10 --crf 30 --film-grain 10 --tune 0 -b stdout --lp 2 --pin 0
+            set cmd_encode SvtAv1EncApp -i stdin --preset 6 --keyint 240 --rc 0 --passes 1 --crf 20 --film-grain 10 --tune 0 -b stdout --lp 2 --pin 0
             if test $full_range -eq 1
                 set -a cmd_encode --color-range 1 # 0 is limited, 1 is full
             end
