@@ -23,9 +23,9 @@ if test $ext = "m4v"
 	set extra_cmd $extra_cmd -f mp4
 end
 
-# Must convert all MP4 to AVI to avoid timestamp issues
+# Must convert non-avi to AVI to avoid timestamp issues
 set -g tmpdir (mktemp -d)
-if test $keep_ts -eq 0
+if test $keep_ts -eq 0 && not string match -q $ext avi
 	set i 1
 	for f in $files
 		set outname (string replace -r '\.'$ext'$' .avi $f)
