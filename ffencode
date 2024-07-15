@@ -36,7 +36,7 @@ function secs_to_ts
     set -l duration $argv[1]
     set -l hh 0
     set -l ss $duration
-    if test $duration -le 60
+    if test $duration -ge 60
         set hh (math -s0 $duration / 60)
         set ss (math $duration % 60)
     end
