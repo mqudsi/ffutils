@@ -377,7 +377,8 @@ begin
 
         set cmd_encode
         if string match -q $encoder "rav1e"
-            set av1_opts "--quantizer 40 --speed 5"
+            # set av1_opts "--quantizer 40 --speed 5"
+            set av1_opts "--speed 6 --quantizer 50 --no-scene-detection --tiles 2"
             # rav1e supports full-range output but does not do any range-scaling, so the --range
             # option must correspond to whatever we have ffmpeg producing.
             # See https://github.com/xiph/rav1e/issues/1489
