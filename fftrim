@@ -12,6 +12,12 @@ if test $argv[1] = "--crop"
     set crop (echo $crop,)
 end
 
+set -l debug 0
+if test $argv[1] = "--debug"
+    set -e argv[1]
+    set debug 1
+end
+
 set -l half 0
 if test $argv[1] = "--half" -o $argv[1] = "--halve"
     set half 1
@@ -178,10 +184,15 @@ and begin
     touch -r $source $temp_dest
     safe_mv $temp_dest $dest
 
-    rm -rf $outdir
     if type -q size_compare
         size_compare $source $dest $orig_size
     end
+end
+
+if test $debug -eq 1
+    echo intermediate files can be found in $outdir
+else
+    rm -rf $outdir
 end
 
 echo "done!"
