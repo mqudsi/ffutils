@@ -128,7 +128,8 @@ begin
     printf '    description = $in from $start to $end\n' $crf
 
     echo 'rule ffconcat'
-    echo '    command = ffconcat $in $out'
+    # We can use --keep-ts because we used -avoid_negative_ts above. If it doesn't work, change make_non_negative to make_zero.
+    echo '    command = ffconcat --keep-ts $in $out'
 end | tee -a $script > /dev/null
 
 set -l files ""
