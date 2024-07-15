@@ -296,7 +296,7 @@ set filters $filters "scale='iw:trunc(ow/a/2)*2'"
 
 # ffmpeg has conditional specifiers only for global streams, not for specific types.
 # If we want to avoid an error on files without audio streams, we need to pre-detect their absence
-if string match -q -- "$audio" "-an" or not has_audio $source
+if string match -q -- "$audio" "-an" || not has_audio $source
     set audio "-an"
 else
     # Here we can conditionally add any audio-related arguments we always want (when audio is present)
