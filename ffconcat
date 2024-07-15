@@ -30,7 +30,9 @@ if test $keep_ts -eq 0 && not string match -q $ext avi
 	for f in $files
 		set outname (string replace -r '\.'$ext'$' .avi $f)
 		command ffmpeg  -hide_banner -i $f -c copy $tmpdir/(basename $outname)
-		touch -r $f $tmpdir/(basename $outname)
+		# Touch is broken on WSL-mapped network paths and reads (then sets) an incorrect (blank) date
+		# touch -r $f $tmpdir/(basename $outname)
+		copy_mtime $f $tmpdir/(basename $outname)
 		set files[$i] $tmpdir/(basename $outname)
 		set i (math $i + 1)
 	end
@@ -56,7 +58,9 @@ if test $ffmpeg_ok -eq 1
 	# test -f moov-meta && mp4edit --insert moov:moov-meta $out /dev/stdout | rewrite $out
 	# rm -f moov-meta
 
-	touch -r $files[1] $out
+	# Touch is broken on WSL-mapped network paths and reads (then sets) an incorrect (blank) date
+	# touch -r $files[1] $out
+	copy_mtime $files[1] $out
 end
 
 rm -rf $tmpdir

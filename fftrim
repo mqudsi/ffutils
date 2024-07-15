@@ -182,7 +182,9 @@ and begin
     test -f moov-meta && mp4edit --insert moov:moov-meta $temp_dest /dev/stdout | rewrite $temp_dest
     rm -f moov-meta
 
-    touch -r $source $temp_dest
+    # Touch is broken on WSL-mapped network paths and reads (then sets) an incorrect (blank) date
+    # touch -r $source $temp_dest
+    copy_mtime $source $temp_dest
     safe_mv $temp_dest $dest
 
     if type -q size_compare
