@@ -1,0 +1,29 @@
+#!/usr/bin/env fish
+
+set src $argv[1]
+set sensitivity $argv[2]
+
+if test "$sensitivity" = ""
+	set sensitivity 0.3
+end
+
+ffmpeg -i $src -filter_complex "[0:v]select='eq(n\,0)+gt(scene,$sensitivity)',metadata=print:file=/dev/stdout" -f null - | read -alz -d\n lines
+set timestamps (string replace -rf ".*pts_time:(.*)" '$1' -- $lines)
+
+set i 1
+set len (count $timestamps)
+
+if test $len -eq 1
+	echo "No scene changes detected! Retry with a different sensitivity (currently $sensitivity)?" 1>&2
+	exit 1
+else
+	echo "Found $len scene(s). Splitting now."
+	if isatty
+		sleep 5
+	end
+end
+
+while test $i -le $len
+	fftrim $src $timestamps[$i],"$(echo $timestamps[(math $i + 1)])" (path basename -E $src)-$i(path extension $src)
+	set i (math $i + 1)
+end
