@@ -1,0 +1,45 @@
+#!/usr/local/bin/fish
+if test (count $argv) -lt 2 -o (count $argv) -gt 3
+	echo "Usage: ffrotate src.mp4 DEGREES [OUTPATH]" 1>&2
+	exit 1
+end
+
+if not string match -qr '^-?\d+$' -- $argv[2]
+	echo "\"$argv[2]\" is not a valid number!"
+	exit 1
+end
+
+set -l src $argv[1]
+set -l deg $argv[2]
+set -q argv[3] && set -l out $argv[3] || set -l out $src
+
+# Rotation is counter-clockwise, which is counter-intuitive
+set deg (math \(360 - $deg\) % 360)
+
+set -l ext (string replace -r '.*\.' '' -- $src)
+if test "$ext" = ""
+	set ext "mp4"
+end
+if string match -iqr '^(avi|flv|mpe?g)$' -- $ext
+	set ext "mp4"
+end
+
+set -l dst (mktemp /tmp/XXXX.$ext)
+rm -f $dst
+
+set -l dst_flags
+if string match -- "$ext" "m4v"
+	set -a dst_flags -f mp4
+end
+
+# -metadata:s:v:0 rotate=$deg is deprecated (and doesn't seem to always work), -display_rotation is recommended instead
+set cmd ffmpeg -hide_banner -display_rotation:v:0 $deg -i $argv[1] -c copy -map_metadata:g 0:g -map_metadata:s:v 0:s:v -movflags +use_metadata_tags+faststart+write_colr $dst_flags $dst
+echo (string escape -- $cmd)
+if command $cmd
+	cp $dst $out; and rm $dst
+	exit $status
+end
+
+rm -f $dst # it might not exist
+echo "Error rotating video" 1>&2
+exit $status
