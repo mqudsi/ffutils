@@ -1,29 +1,280 @@
-#!/usr/bin/env fish
+#!/bin/sh
+#![allow(missing_abi)] /*
+# rust self-compiler by M. Al-Qudsi, licensed as public domain or MIT.
+# See <https://neosmart.net/blog/self-compiling-rust-code/> for info & updates.
+OUT=/tmp/$(printf "%s" $(realpath $(which "$0")) | md5sum | cut -d' '  -f1)
+MD5=$(md5sum "$0" | cut -d' '  -f1)
+(test "${MD5}" = "$(cat "${OUT}.md5" 2>/dev/null)" ||
+(grep -Eq '^\s*(\[.*?\])*\s*fn\s*main\b*' "$0" && (rm -f ${OUT};
+rustc "$0" -o ${OUT} && printf "%s" ${MD5} > ${OUT}.md5) || (rm -f ${OUT};
+printf "fn main() {//%s\n}" "$(cat $0)" | rustc - -o ${OUT} &&
+printf "%s" ${MD5} > ${OUT}.md5))) && exec ${OUT} "$@" || exit $? #*/
 
-set src $argv[1]
-set sensitivity $argv[2]
+use std::env;
+use std::io::prelude::*;
+use std::io::BufReader;
+use std::process::{Command, Stdio};
 
-if test "$sensitivity" = ""
-	set sensitivity 0.3
-end
+enum Mode {
+    /// Break on any chunks greater than the specified sensitivity
+    All,
+    /// Break into the top N chunks; errors if less than N chunks detected.
+    Chunks(usize),
+    /// Break into a maximum of N chunks
+    MaxChunks(usize),
+}
 
-ffmpeg -i $src -filter_complex "[0:v]select='eq(n\,0)+gt(scene,$sensitivity)',metadata=print:file=/dev/stdout" -f null - | read -alz -d\n lines
-set timestamps (string replace -rf ".*pts_time:(.*)" '$1' -- $lines)
+#[derive(Clone, Debug)]
+struct Frame {
+    timestamp: f64,
+    score: f64,
+}
 
-set i 1
-set len (count $timestamps)
+fn main() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.len() < 1 {
+        eprintln!("Usage: ffsplit <input_video> [--sensitivity <value>] [--chunks N | --max-chunks N] [--min-length SECS]");
+        std::process::exit(1);
+    }
 
-if test $len -eq 1
-	echo "No scene changes detected! Retry with a different sensitivity (currently $sensitivity)?" 1>&2
-	exit 1
-else
-	echo "Found $len scene(s). Splitting now."
-	if isatty
-		sleep 5
-	end
-end
+    let mut src = None;
+    let mut mode = Mode::All;
+    let mut scene_sensitivity = 0.1;
+    let mut dry_run = false;
+    let mut min_secs = 5.0;
 
-while test $i -le $len
-	fftrim $src $timestamps[$i],"$(echo $timestamps[(math $i + 1)])" (path basename -E $src)-$i(path extension $src)
-	set i (math $i + 1)
-end
+    // Handle --sensitivity option
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--sensitivity" => {
+                let sensitivity: f64 = args
+                    .next()
+                    .map(|a| a.as_str())
+                    .and_then(|s| s.parse().ok())
+                    .expect("Error missing or invalid --sensitivity value!");
+                scene_sensitivity = sensitivity;
+            }
+            "--chunks" => {
+                let chunks: usize = args
+                    .next()
+                    .map(|a| a.as_str())
+                    .and_then(|s| s.parse().ok())
+                    .expect("Error missing or invalid --chunks count!");
+                mode = Mode::Chunks(chunks);
+            }
+            "--max-chunks" => {
+                let chunks: usize = args
+                    .next()
+                    .map(|a| a.as_str())
+                    .and_then(|s| s.parse().ok())
+                    .expect("Error missing or invalid --chunks count!");
+                mode = Mode::MaxChunks(chunks);
+            }
+            "--min-length" => {
+                min_secs = args
+                    .next()
+                    .map(|a| a.as_str())
+                    .and_then(|s| s.parse().ok())
+                    .expect("Error missing or invalid --min-length duration!");
+            }
+            "-n" | "--dry-run" => dry_run = true,
+            file => {
+                if !std::fs::exists(file).unwrap() {
+                    eprintln!("Path {file} does not exist!");
+                    std::process::exit(1);
+                }
+                src = Some(file);
+            }
+        }
+    }
+    let src = src.expect("Source file not specified!");
+
+    // Select { (first frame), (I-frames that are likely to be a scene transition, that are more
+    // than N seconds since the last selected frame) }
+    // UPDATE: We are now filtering by min_secs below to account for score
+    let select = format!(
+        concat!(
+            "eq(n\\,0)",
+            "+eq(pict_type\\,I)",
+            // "*gte(t-prev_selected_t\\,{min_secs})",
+            "*gte(scene,{scene_sensitivity})"
+        ),
+        // min_secs = min_secs,
+        scene_sensitivity = scene_sensitivity
+    );
+
+    // Execute ffmpeg and capture the output
+    let ffmpeg = Command::new("ffmpeg")
+        .args(&[
+            "-i",
+            src,
+            "-filter_complex",
+            &format!("[0:v]select='{select}',metadata=print:file=/dev/stdout"),
+            "-an",
+            "-c:v",
+            "rawvideo",
+            "-f",
+            "null",
+            "-",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to start ffmpeg");
+
+    // Parse output to extract pts_time
+    let mut timestamps = vec![];
+    let mut timestamp = 0.0_f64;
+    let mut score: f64;
+    let reader = BufReader::new(ffmpeg.stdout.unwrap());
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if let Some(pos) = line.find("pts_time:") {
+            let timestamp_str = &line[(pos + "pts_time:".len())..];
+            timestamp = timestamp_str.trim().parse().unwrap();
+        } else if let Some(pos) = line.find("scene_score=") {
+            let score_str = &line[(pos + "scene_score=".len())..];
+            score = score_str.trim().parse().unwrap();
+            timestamps.push(Frame::new(timestamp, score));
+        }
+    }
+
+    if timestamps.len() <= 1 {
+        eprintln!(
+            "No scene changes detected! Retry with a different sensitivity (currently {})?",
+            scene_sensitivity
+        );
+        std::process::exit(1);
+    } else {
+        println!("Found {} scene(s). Splitting now.", timestamps.len());
+    }
+
+    let mut timestamps = filter_by_min_len(&timestamps, min_secs);
+
+    let mut chunk = |count| {
+        // Sort in reverse score order to keep top N
+        timestamps.sort_by(|lhs, rhs| rhs.score.total_cmp(&lhs.score));
+        if timestamps.len() > count {
+            timestamps.truncate(count);
+        }
+        // Then put back into the correct chronological order
+        timestamps.sort_by(|lhs, rhs| lhs.timestamp.total_cmp(&rhs.timestamp));
+    };
+
+    match &mode {
+        Mode::All => (),
+        Mode::MaxChunks(n) => chunk(*n),
+        Mode::Chunks(n) => {
+            chunk(*n);
+            if timestamps.len() != *n {
+                eprintln!(
+                    "Requested {n} chunks but only {} chunk(s) found. Consider changing --sensitivity (currently {scene_sensitivity}).",
+                    timestamps.len()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if dry_run {
+        for (i, Frame { timestamp, score }) in timestamps.iter().enumerate() {
+            println!("{i}) @{timestamp}s with score {score}");
+        }
+        std::process::exit(0);
+    }
+
+    // Split the input video by identified timestamps
+    for (i, Frame { timestamp, .. }) in timestamps.iter().enumerate() {
+        let end_time = if i + 1 < timestamps.len() {
+            // `ffmpeg .. -to TS` should stop reading at TS, meaning it should be inclusive of
+            // start but exclusive of end. But this seems to work better?
+            (timestamps[i + 1].timestamp - 1.0 / 24.0).to_string()
+        } else {
+            // The last segment
+            "".to_string()
+        };
+
+        let output_file = format!("{}-{}.{}", src.trim_end_matches(".mp4"), i + 1, "mp4");
+        let mut child = Command::new("fftrim");
+        child
+            .arg(src)
+            .arg(format!("{timestamp},{end_time}"))
+            .arg(output_file.as_str())
+            .status()
+            .expect("Failed to execute fftrim");
+    }
+}
+
+impl Frame {
+    pub fn new(timestamp: f64, score: f64) -> Self {
+        Self { timestamp, score }
+    }
+}
+
+fn filter_by_min_len(frames: &[Frame], min_secs: f64) -> Vec<Frame> {
+    let mut filtered = Vec::with_capacity(frames.len());
+    // The last timestamp that passed the min_secs check
+    let mut last_actual_ts: Option<f64> = None;
+    // The best entry we might want to keep
+    let mut potential: Option<Frame> = None;
+
+    for frame in frames {
+        let Some(last_actual) = last_actual_ts else {
+            // Always include the very first element
+            // eprintln!("Pushing first ({}, {})", frame.timestamp, frame.score);
+            filtered.push(frame.clone());
+            last_actual_ts = Some(frame.timestamp);
+            continue;
+        };
+
+        if frame.timestamp - last_actual >= min_secs {
+            // Realize the potential entry
+            if let Some(mut p) = potential.take() {
+                // If we are within min_secs of potential, replace
+                // potential before realizing it.
+                if frame.timestamp - p.timestamp < min_secs {
+                    if frame.score > p.score {
+                        // eprintln!("Replacing potential ({}, {}) with ({}, {})",
+                        //     p.timestamp, p.score, frame.timestamp, frame.score);
+                        p = frame.clone();
+                    }
+                } else {
+                    // eprintln!("Overwriting potential with ({}, {})",
+                    //     frame.timestamp, frame.score);
+                    potential = Some(frame.clone());
+                }
+                eprintln!("Inserting ({}, {})", p.timestamp, p.score);
+                last_actual_ts = Some(p.timestamp);
+                filtered.push(p);
+                continue;
+            }
+        } else {
+            continue;
+        }
+
+        if let Some(ref p) = potential {
+            // Decide which of `potential` and `current` to keep
+            if frame.score > p.score {
+                // eprintln!("Replacing1 potential with ({}, {})",
+                //     frame.timestamp, frame.score);
+                potential = Some(frame.clone());
+            }
+        } else {
+            // eprintln!("Replacing2 potential with ({}, {})",
+            //     frame.timestamp, frame.score);
+            potential = Some(frame.clone());
+        }
+    }
+    if let (Some(last_ts), Some(pending)) = (last_actual_ts, potential) {
+        if pending.timestamp - min_secs > last_ts {
+            // eprintln!("Pushing pending ({}, {})",
+            //     pending.timestamp, pending.score);
+            filtered.push(pending);
+        }
+    }
+
+    filtered
+}
+
+// vim: ft=rust :
